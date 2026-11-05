@@ -25,7 +25,9 @@ export default function DashboardPage() {
 
   const isManager = d.viewer.role === "manager";
   const firstName = d.viewer.name.split(" ")[0];
-  const collectedShare = d.dueTodayCents > 0 ? d.collectedToday / d.dueTodayCents : 0;
+  // Payments fill the oldest instalments first, so cash collected today may not cover today's instalments.
+  const unpaidTodayCents = d.dueToday.reduce((sum, r) => sum + r.amountCents, 0);
+  const paidTodayShare = d.dueTodayCents > 0 ? (d.dueTodayCents - unpaidTodayCents) / d.dueTodayCents : 0;
   const waiting = isManager ? d.pendingApprovals : d.awaitingPayout + d.sentBack;
 
   return (
@@ -77,15 +79,15 @@ export default function DashboardPage() {
             Collected from {plural(d.paymentsToday, "payment")}
           </div>
           <div className="mt-auto flex items-center gap-3 pt-4">
-            <Progress value={collectedShare} tone="bright" />
-            <span className="tnum text-[13px]">{d.dueTodayCents > 0 ? percent(Math.min(collectedShare, 1)) : "—"}</span>
+            <Progress value={paidTodayShare} tone="bright" />
+            <span className="tnum text-[13px]">{d.dueTodayCents > 0 ? percent(paidTodayShare) : "—"}</span>
           </div>
           <div className="mt-2 text-[12.5px] text-navy-muted">
             {d.dueTodayCents === 0
               ? "Nothing scheduled for today"
-              : collectedShare >= 1
-                ? `Today's ${formatMoney(d.dueTodayCents)} is covered`
-                : `${formatMoney(d.dueTodayCents - d.collectedToday)} of ${formatMoney(d.dueTodayCents)} due today still to collect`}
+              : unpaidTodayCents === 0
+                ? `Today's instalments (${formatMoney(d.dueTodayCents)}) are paid`
+                : `${formatMoney(unpaidTodayCents)} of today's ${formatMoney(d.dueTodayCents)} instalments still unpaid`}
           </div>
         </Link>
 

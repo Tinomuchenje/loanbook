@@ -465,6 +465,7 @@ function RecordPaymentPanel({ data }: { data: Detail }) {
           ? `Receipt ${receiptNo(r.receiptNumber)}. The loan is now paid in full and closed.`
           : `Receipt ${receiptNo(r.receiptNumber)} saved. ${formatMoney(r.remainingCents)} still owed.`,
       );
+      setAmount("");
       setRef("");
     } catch (err) {
       setError(errorMessage(err));

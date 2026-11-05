@@ -118,7 +118,7 @@ function NewApplication() {
                 {file ? (
                   <span className="min-w-0">
                     <span className="block truncate font-medium">{file.name}</span>
-                    <span className="text-[12.5px] text-muted">{(file.size / 1024 / 1024).toFixed(1)} MB · click to change</span>
+                    <span className="text-[12.5px] text-muted">{file.size < 1024 * 1024 ? `${Math.max(1, Math.round(file.size / 1024))} KB` : `${(file.size / 1024 / 1024).toFixed(1)} MB`} · click to change</span>
                   </span>
                 ) : (
                   <span className="text-muted">Choose a file</span>
