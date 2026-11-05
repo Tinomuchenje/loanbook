@@ -2,13 +2,13 @@
 
 A loan management system for a small lender. Loan officers capture borrowers and applications, record payouts and repayments, and follow up late payers. The manager approves or declines loans and watches the portfolio and arrears.
 
-Built with **Next.js 16.4** (App Router), **Convex** (database, backend functions, file storage), **Clerk** (sign-in) and **Tailwind CSS 4**, and deployed on **Vercel**.
+Built with **Next.js 16.4** (App Router), **Convex** (database, backend functions, file storage), **Convex Auth** (email and password sign-in) and **Tailwind CSS 4**, and deployed on **Vercel**.
 
 ## What it does
 
 | # | Feature | Where |
 |---|---|---|
-| 1 | Sign-in and app shell. The first person to sign in becomes the manager, who adds staff by email. Uninvited sign-ins are kept out. | `convex/users.ts`, `src/components/viewer.tsx`, `src/components/shell.tsx`, `/staff` |
+| 1 | Email and password sign-in and app shell. The first account becomes the manager, who adds staff by email; only those emails can create accounts. Managers can reset a forgotten password. | `convex/auth.ts`, `convex/users.ts`, `src/app/sign-in`, `src/components/shell.tsx`, `/staff` |
 | 2 | Borrowers: add, edit, search by name or ID number. ID numbers are unique. | `convex/borrowers.ts`, `/borrowers` |
 | 3 | Applications: amount, term of 1–24 months, purpose, uploaded payslip, live quote. Sent-back applications can be fixed and resubmitted. | `convex/loans.ts`, `/applications/new`, `/loans/[id]` |
 | 4 | Approvals (managers only): approve as requested, approve with a lower amount or shorter term, send back with a note, or decline with a reason. Every decision records who and when. | `loans.decide`, `/applications` |
@@ -35,34 +35,31 @@ Worked example: $1,000 over 6 months → $985 deposited, $600 interest, $1,600 r
 
 ## Run it locally
 
-You need Node 20.9 or later, a free [Convex](https://convex.dev) account and a free [Clerk](https://clerk.com) account.
+You need Node 20.9 or later and a free [Convex](https://convex.dev) account. Nothing else.
 
 1. **Install**
    ```bash
    npm install
-   cp .env.example .env.local
    ```
 
-2. **Set up Clerk**
-   - Create an application with **Email** sign-in.
-   - Go to **JWT templates → New template → Convex**. Keep the name `convex`. Copy its **Issuer** URL.
-   - Copy the publishable and secret keys from **API keys** into `.env.local`.
-   - Recommended: under **Restrictions**, turn off public sign-ups or use an allowlist. The app already refuses anyone the manager hasn't added, but this keeps strangers out of Clerk too.
-
-3. **Set up Convex**
+2. **Start Convex** and leave it running:
    ```bash
    npx convex dev
    ```
-   Log in and create a project when asked. This writes `CONVEX_DEPLOYMENT` and `NEXT_PUBLIC_CONVEX_URL` to `.env.local`, regenerates `convex/_generated`, and keeps pushing your functions while it runs. In a second terminal:
+   Log in and create a project when asked. This creates `.env.local`, regenerates `convex/_generated`, and keeps pushing the backend as you edit.
+
+3. **Set up sign-in keys** in a second terminal. This is needed once per deployment:
    ```bash
-   npx convex env set CLERK_JWT_ISSUER_DOMAIN https://<your-app>.clerk.accounts.dev
+   npm run setup:auth
    ```
 
-4. **Start the app** (keep `npx convex dev` running)
+4. **Start the app**:
    ```bash
    npm run dev
    ```
-   Open http://localhost:3000 and sign in. **The first person to sign in becomes the manager.** Add loan officers under **Staff**; they sign in with the same email address.
+   Open http://localhost:3000, choose **Create your account**, and set a password. **The first account becomes the manager.** Add loan officers under **Staff**; they then create their own accounts on the sign-in page with that email address.
+
+**Forgotten password:** a manager opens **Staff** and chooses **Reset password**. Email-based resets can come later, once an email service is connected.
 
 ## Deploy to Vercel
 
@@ -73,13 +70,13 @@ Following [Using Convex with Vercel](https://docs.convex.dev/production/hosting/
    ```
    npx convex deploy --cmd 'npm run build'
    ```
-3. In the Convex dashboard, create a **Production deploy key** and add it in Vercel as `CONVEX_DEPLOY_KEY` for the **Production** environment only. For previews, add a **Preview deploy key** under the same name for the **Preview** environment; each pull request then gets its own Convex backend.
-4. In Vercel, add `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY`, `CLERK_SECRET_KEY` and `NEXT_PUBLIC_CLERK_SIGN_IN_URL=/sign-in`.
-5. Set the issuer on the production Convex deployment:
+3. In the Convex dashboard, create a **Production deploy key** and add it in Vercel as `CONVEX_DEPLOY_KEY` for the **Production** environment only. For previews, add a **Preview deploy key** under the same name for the **Preview** environment.
+4. Set up sign-in keys on production once, from your machine:
    ```bash
-   npx convex env set --prod CLERK_JWT_ISSUER_DOMAIN https://clerk.<your-domain>
+   npm run setup:auth -- --prod
+   npx convex env set --prod SITE_URL https://<your-vercel-domain>
    ```
-6. **Clerk production needs a custom domain**; it doesn't accept `*.vercel.app` addresses. Add your domain in Vercel and in Clerk's production instance, then use the production keys and issuer.
+5. Deploy, then create the first account on the live site. It becomes the production manager.
 
 ## Checks
 
@@ -90,7 +87,7 @@ npm run lint
 npm run build
 ```
 
-The journey tests (`tests/journey.test.ts`) run every Convex function in memory with [convex-test](https://docs.convex.dev/testing/convex-test). They cover role checks (an officer can't approve, even by calling the backend directly), the worked example to the cent, part-payments, arrears and days late, settling in full, and an all-or-nothing import.
+The journey tests (`tests/journey.test.ts`) run every Convex function in memory with [convex-test](https://docs.convex.dev/testing/convex-test). They cover who can create an account (first one is the manager, then only staff emails), role checks (an officer can't approve, even by calling the backend directly), the worked example to the cent, part-payments, arrears and days late, settling in full, and an all-or-nothing import.
 
 ## Going live (feature 9)
 
@@ -109,6 +106,7 @@ convex/              Backend: schema, queries and mutations, one file per featur
   lib/loanMath.ts    Interest, fees, schedule, allocation, arrears (pure, shared with the screens)
 src/app/(app)/       Screens behind sign-in: dashboard, borrowers, applications, loans, repayments, arrears, staff, import
 src/components/      UI kit, app shell, shared loan components
-src/proxy.ts         Clerk session check on every page except /sign-in
+src/app/sign-in/     Email and password sign-in and account creation
+scripts/setup-auth.mjs  Generates and saves the sign-in signing keys
 tests/               Vitest: maths, CSV, end-to-end journey
 ```

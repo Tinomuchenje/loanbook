@@ -4,7 +4,6 @@ import clsx from "clsx";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useState, type ReactNode } from "react";
-import { UserButton } from "@clerk/nextjs";
 import {
   AlertTriangle,
   ClipboardCheck,
@@ -18,7 +17,8 @@ import {
   Users,
   X,
 } from "lucide-react";
-import { useViewer } from "./viewer";
+import { SignOutButton, useViewer } from "./viewer";
+import { Avatar } from "./ui";
 import { Logo } from "./logo";
 
 type NavItem = { href: string; label: string; icon: typeof Users; managerOnly?: boolean };
@@ -70,11 +70,12 @@ export function Shell({ children }: { children: ReactNode }) {
 
   const userCard = (
     <div className="flex items-center gap-3 rounded-xl border border-line px-3 py-2.5">
-      <UserButton />
-      <div className="min-w-0">
+      <Avatar name={viewer.name} size={32} />
+      <div className="min-w-0 flex-1">
         <div className="truncate text-sm font-medium">{viewer.name}</div>
-        <div className="text-[12px] capitalize text-muted">{viewer.role === "manager" ? "Manager" : "Loan officer"}</div>
+        <div className="text-[12px] text-muted">{viewer.role === "manager" ? "Manager" : "Loan officer"}</div>
       </div>
+      <SignOutButton iconOnly className="grid h-8 w-8 shrink-0 place-items-center rounded-lg text-muted hover:bg-sunk hover:text-ink" />
     </div>
   );
 

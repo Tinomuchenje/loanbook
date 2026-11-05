@@ -1,22 +1,20 @@
 import { ConvexError } from "convex/values";
+import { getAuthUserId } from "@convex-dev/auth/server";
 import type { QueryCtx } from "../_generated/server";
 import type { Doc } from "../_generated/dataModel";
 
-/** The signed-in staff member, or null if not signed in, not added, or switched off. */
+/** The signed-in staff member, or null if signed out or switched off. */
 export async function getViewer(ctx: QueryCtx): Promise<Doc<"users"> | null> {
-  const identity = await ctx.auth.getUserIdentity();
-  if (!identity) return null;
-  const user = await ctx.db
-    .query("users")
-    .withIndex("by_token", (q) => q.eq("tokenIdentifier", identity.tokenIdentifier))
-    .unique();
+  const userId = await getAuthUserId(ctx);
+  if (!userId) return null;
+  const user = await ctx.db.get("users", userId);
   if (!user || !user.active) return null;
   return user;
 }
 
 export async function requireUser(ctx: QueryCtx): Promise<Doc<"users">> {
   const user = await getViewer(ctx);
-  if (!user) throw new ConvexError("Sign in with an account your manager has added.");
+  if (!user) throw new ConvexError("Sign in to continue.");
   return user;
 }
 

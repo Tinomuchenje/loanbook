@@ -1,5 +1,6 @@
 import { defineSchema, defineTable } from "convex/server";
 import { v } from "convex/values";
+import { authTables } from "@convex-dev/auth/server";
 
 /**
  * Money is always stored in whole cents (integers).
@@ -24,16 +25,17 @@ export const paymentMethodValidator = v.union(
 );
 
 export default defineSchema({
+  // Convex Auth's tables: sign-in accounts (email + hashed password), sessions, tokens.
+  ...authTables,
+
+  // Staff. Replaces Convex Auth's default users table; each staff member's
+  // password account (in authAccounts) points at their row here.
   users: defineTable({
-    email: v.string(),
+    email: v.string(), // lower case
     name: v.string(),
     role: roleValidator,
     active: v.boolean(),
-    // Filled in the first time the person signs in with Clerk.
-    tokenIdentifier: v.optional(v.string()),
-  })
-    .index("by_email", ["email"])
-    .index("by_token", ["tokenIdentifier"]),
+  }).index("email", ["email"]),
 
   borrowers: defineTable({
     name: v.string(),

@@ -2,12 +2,12 @@ import { convexTest } from "convex-test";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { api } from "../convex/_generated/api";
 import schema from "../convex/schema";
+import { linkStaffAccount } from "../convex/lib/staffAccounts";
 
 const modules = import.meta.glob("../convex/**/*.ts");
 
-const MANAGER = { name: "Grace Manager", email: "grace@lender.co.zw", subject: "clerk|grace" };
-const OFFICER = { name: "Tapiwa Officer", email: "tapiwa@lender.co.zw", subject: "clerk|tapiwa" };
-const STRANGER = { name: "Someone", email: "someone@else.com", subject: "clerk|stranger" };
+const MANAGER = { name: "Grace Manager", email: "grace@lender.co.zw" };
+const OFFICER = { name: "Tapiwa Officer", email: "tapiwa@lender.co.zw" };
 
 const borrower = {
   name: "Rudo Chikwanha",
@@ -25,14 +25,26 @@ beforeEach(() => {
 });
 afterEach(() => vi.useRealTimers());
 
+type T = ReturnType<typeof convexTest>;
+
+/** What Convex Auth runs when someone creates a password account. */
+function signUp(t: T, person: { name: string; email: string }) {
+  return t.run((ctx) => linkStaffAccount(ctx, person));
+}
+
+/** A signed-in session, as Convex Auth presents it: subject is "userId|sessionId". */
+function signedIn(t: T, userId: string) {
+  return t.withIdentity({ subject: `${userId}|session` });
+}
+
 async function setup() {
   const t = convexTest(schema, modules);
-  const manager = t.withIdentity(MANAGER);
-  const officer = t.withIdentity(OFFICER);
-  expect(await manager.mutation(api.users.link, {})).toEqual({ result: "ok" });
-  await manager.mutation(api.users.addStaff, { name: OFFICER.name, email: OFFICER.email, role: "officer" });
-  expect(await officer.mutation(api.users.link, {})).toEqual({ result: "ok" });
-  return { t, manager, officer };
+  const managerId = await signUp(t, MANAGER);
+  const manager = signedIn(t, managerId);
+  await manager.mutation(api.users.addStaff, { name: OFFICER.name, email: "  Tapiwa@Lender.co.zw ", role: "officer" });
+  const officerId = await signUp(t, { name: "", email: OFFICER.email });
+  const officer = signedIn(t, officerId);
+  return { t, manager, officer, managerId, officerId };
 }
 
 async function uploadDoc(t: ReturnType<typeof convexTest>) {
@@ -55,22 +67,27 @@ async function approvedLoan(amountCents = 100000, term = 6) {
 }
 
 describe("sign-in and staff (feature 1)", () => {
-  test("first person is manager; strangers are kept out; officers can't manage staff", async () => {
-    const { t, officer } = await setup();
-    const stranger = t.withIdentity(STRANGER);
-    expect(await stranger.mutation(api.users.link, {})).toEqual({ result: "not_invited" });
-    expect((await stranger.query(api.users.me, {})).state).toBe("needs_link");
-    await expect(stranger.query(api.borrowers.list, {})).rejects.toThrow(/Sign in/);
-    await expect(officer.query(api.users.listStaff, {})).rejects.toThrow(/Only a manager/);
+  test("first account is the manager; only staff can create accounts; officers can't manage staff", async () => {
+    const { t, manager, officer } = await setup();
+    expect((await manager.query(api.users.me, {})).user?.role).toBe("manager");
     const me = await officer.query(api.users.me, {});
     expect(me.state).toBe("ok");
     expect(me.user?.role).toBe("officer");
+    expect(me.user?.name).toBe(OFFICER.name);
+    await expect(signUp(t, { name: "Someone", email: "someone@else.com" })).rejects.toThrow(/isn't on the staff list/);
+    expect((await t.query(api.users.me, {})).state).toBe("signed_out");
+    await expect(t.query(api.borrowers.list, {})).rejects.toThrow(/Sign in/);
+    await expect(officer.query(api.users.listStaff, {})).rejects.toThrow(/Only a manager/);
+    await expect(officer.mutation(api.users.addStaff, { name: "X", email: "x@y.co", role: "manager" })).rejects.toThrow(
+      /Only a manager/,
+    );
   });
 
   test("a switched-off officer loses access", async () => {
     const { manager, officer } = await setup();
     const staff = await manager.query(api.users.listStaff, {});
     const tapiwa = staff.find((s) => s.email === OFFICER.email)!;
+    expect(tapiwa.hasAccount).toBe(false); // no password account in this in-memory test
     await manager.mutation(api.users.updateStaff, { userId: tapiwa._id, active: false });
     expect((await officer.query(api.users.me, {})).state).toBe("inactive");
     await expect(officer.query(api.borrowers.list, {})).rejects.toThrow();

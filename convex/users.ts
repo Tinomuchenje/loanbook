@@ -1,72 +1,35 @@
 import { ConvexError, v } from "convex/values";
-import { mutation, query } from "./_generated/server";
+import { getAuthUserId, invalidateSessions, modifyAccountCredentials } from "@convex-dev/auth/server";
+import { action, internalQuery, mutation, query } from "./_generated/server";
+import type { QueryCtx } from "./_generated/server";
+import type { Id } from "./_generated/dataModel";
+import { internal } from "./_generated/api";
 import { requireManager } from "./lib/auth";
 import { roleValidator } from "./schema";
 import { required } from "./lib/util";
 
+async function hasPasswordAccount(ctx: QueryCtx, userId: Id<"users">) {
+  const account = await ctx.db
+    .query("authAccounts")
+    .withIndex("userIdAndProvider", (q) => q.eq("userId", userId).eq("provider", "password"))
+    .first();
+  return account !== null;
+}
+
 /**
  * Where the signed-in person stands:
- * - "signed_out": no Clerk session
- * - "needs_link": signed in, but this Clerk account isn't linked to a staff record yet (call `link`)
- * - "ok": a linked, active staff member
- * - "inactive": linked but switched off by the manager
+ * - "signed_out": no session
+ * - "inactive": signed in, but the manager switched the account off (or it no longer exists)
+ * - "ok": an active staff member
  */
 export const me = query({
   args: {},
   handler: async (ctx) => {
-    const identity = await ctx.auth.getUserIdentity();
-    if (!identity) return { state: "signed_out" as const, user: null };
-    const user = await ctx.db
-      .query("users")
-      .withIndex("by_token", (q) => q.eq("tokenIdentifier", identity.tokenIdentifier))
-      .unique();
-    if (!user) return { state: "needs_link" as const, user: null };
-    if (!user.active) return { state: "inactive" as const, user: null };
+    const userId = await getAuthUserId(ctx);
+    if (!userId) return { state: "signed_out" as const, user: null };
+    const user = await ctx.db.get("users", userId);
+    if (!user || !user.active) return { state: "inactive" as const, user: null };
     return { state: "ok" as const, user };
-  },
-});
-
-/**
- * Links a Clerk sign-in to a staff record by email address.
- * The very first person to sign in becomes the manager; everyone else must be added by a manager first.
- */
-export const link = mutation({
-  args: {},
-  handler: async (ctx) => {
-    const identity = await ctx.auth.getUserIdentity();
-    if (!identity) throw new ConvexError("Sign in first.");
-    const existing = await ctx.db
-      .query("users")
-      .withIndex("by_token", (q) => q.eq("tokenIdentifier", identity.tokenIdentifier))
-      .unique();
-    if (existing) return { result: existing.active ? ("ok" as const) : ("inactive" as const) };
-
-    const email = identity.email?.toLowerCase().trim();
-    const name = identity.name?.trim() || email || "Staff member";
-
-    const anyUser = await ctx.db.query("users").first();
-    if (!anyUser) {
-      await ctx.db.insert("users", {
-        email: email ?? "",
-        name,
-        role: "manager",
-        active: true,
-        tokenIdentifier: identity.tokenIdentifier,
-      });
-      return { result: "ok" as const };
-    }
-
-    if (!email) return { result: "not_invited" as const };
-    const invited = await ctx.db
-      .query("users")
-      .withIndex("by_email", (q) => q.eq("email", email))
-      .unique();
-    if (!invited || invited.tokenIdentifier) return { result: "not_invited" as const };
-    await ctx.db.patch("users", invited._id, {
-      tokenIdentifier: identity.tokenIdentifier,
-      name: invited.name || name,
-    });
-    return { result: invited.active ? ("ok" as const) : ("inactive" as const) };
   },
 });
 
@@ -75,16 +38,17 @@ export const listStaff = query({
   handler: async (ctx) => {
     await requireManager(ctx);
     const users = await ctx.db.query("users").collect();
-    return users
-      .map((u) => ({
+    const rows = await Promise.all(
+      users.map(async (u) => ({
         _id: u._id,
         name: u.name,
         email: u.email,
         role: u.role,
         active: u.active,
-        hasSignedIn: Boolean(u.tokenIdentifier),
-      }))
-      .sort((a, b) => a.name.localeCompare(b.name));
+        hasAccount: await hasPasswordAccount(ctx, u._id),
+      })),
+    );
+    return rows.sort((a, b) => a.name.localeCompare(b.name));
   },
 });
 
@@ -97,7 +61,7 @@ export const addStaff = mutation({
     if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) throw new ConvexError("Enter a valid email address.");
     const clash = await ctx.db
       .query("users")
-      .withIndex("by_email", (q) => q.eq("email", email))
+      .withIndex("email", (q) => q.eq("email", email))
       .unique();
     if (clash) throw new ConvexError(`${email} is already on the staff list.`);
     return await ctx.db.insert("users", { name, email, role: args.role, active: true });
@@ -117,5 +81,34 @@ export const updateStaff = mutation({
     if (args.role) patch.role = args.role;
     if (args.active !== undefined) patch.active = args.active;
     await ctx.db.patch("users", args.userId, patch);
+  },
+});
+
+/** Used by setPassword: checks the caller is a manager and returns the target's sign-in email. */
+export const passwordTarget = internalQuery({
+  args: { managerId: v.id("users"), userId: v.id("users") },
+  handler: async (ctx, { managerId, userId }) => {
+    const manager = await ctx.db.get("users", managerId);
+    if (!manager || !manager.active || manager.role !== "manager") return { error: "Only a manager can do this." };
+    const target = await ctx.db.get("users", userId);
+    if (!target) return { error: "Staff member not found." };
+    if (!(await hasPasswordAccount(ctx, userId))) {
+      return { error: `${target.name} hasn't created an account yet. They can create one on the sign-in page.` };
+    }
+    return { email: target.email };
+  },
+});
+
+/** A manager sets a new password for someone who has forgotten theirs. Signs them out everywhere. */
+export const setPassword = action({
+  args: { userId: v.id("users"), password: v.string() },
+  handler: async (ctx, { userId, password }) => {
+    const managerId = await getAuthUserId(ctx);
+    if (!managerId) throw new ConvexError("Sign in to continue.");
+    if (password.length < 8) throw new ConvexError("Use at least 8 characters for the password.");
+    const target = await ctx.runQuery(internal.users.passwordTarget, { managerId, userId });
+    if (!target.email) throw new ConvexError(target.error ?? "Staff member not found.");
+    await modifyAccountCredentials(ctx, { provider: "password", account: { id: target.email, secret: password } });
+    if (userId !== managerId) await invalidateSessions(ctx, { userId });
   },
 });

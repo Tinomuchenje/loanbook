@@ -8,10 +8,12 @@
     "start": "next start",
     "lint": "eslint",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run"
+    "test": "vitest run",
+    "setup:auth": "node scripts/setup-auth.mjs"
   },
   "dependencies": {
-    "@clerk/nextjs": "^7.9.24",
+    "@auth/core": "^0.41.3",
+    "@convex-dev/auth": "^0.0.96",
     "clsx": "^2.1.1",
     "convex": "^1.49.0",
     "geist": "^1.9.1",
@@ -29,6 +31,7 @@
     "convex-test": "^0.0.67",
     "eslint": "^9",
     "eslint-config-next": "16.4.5",
+    "jose": "^5.10.0",
     "tailwindcss": "^4",
     "typescript": "^5",
     "vitest": "^5.1.0"
